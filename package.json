@@ -1,19 +1,19 @@
 {
   "dependencies": {
-    "express": "^5.1.0",
+    "@line/bot-sdk": "^10.0.0",
+    "express": "^4.21.2",
     "node-fetch": "^3.3.2"
   },
   "name": "line-bot-webhook",
   "version": "1.0.0",
   "main": "server.js",
-  "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
   },
   "keywords": [
-        "line",
-        "bot"
+    "line",
+    "bot"
   ],
   "author": "",
   "license": "ISC",

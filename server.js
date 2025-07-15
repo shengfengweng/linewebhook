@@ -1,55 +1,85 @@
 // server.js
 const express = require('express');
+const line = require('@line/bot-sdk');
+
+// ------------------- 關鍵設定 -------------------
+// 這些資訊需要從你的 LINE Developers Console 和 Render 環境變數中取得
+const config = {
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET,
+};
+// ---------------------------------------------
+
 const app = express();
-
-// ❗️非常重要：這個中介軟體 (middleware) 會解析傳入的 JSON 請求
-// 並將其放入 req.body。如果沒有這行，req.body 會是 undefined。
-app.use(express.json());
-
-const PORT = process.env.PORT || 3000;
+const client = new line.Client(config);
 
 // 根路徑，用來測試伺服器是否正常運行
 app.get('/', (req, res) => {
-  res.send('LINE Bot Webhook 伺服器正在運行！');
+  res.send('LINE Bot Webhook 伺服器正在運行，並且準備好接收請求了！');
 });
 
-// Webhook 的主要路徑
-app.post('/webhook', (req, res) => {
-  console.log('=============== 收到 LINE 的請求！ ===============');
-  // 為了方便偵錯，仍然印出完整的請求 body
-  console.log('完整請求 Body:', JSON.stringify(req.body, null, 2));
-
-  // ⭐️⭐️⭐️ 主要修改部分：遍歷所有事件並提取 User ID ⭐️⭐️⭐️
-
-  // 檢查 req.body.events 是否存在且是一個陣列
-  if (req.body && Array.isArray(req.body.events)) {
-    // 使用 forEach 處理可能一次收到的多個事件
-    req.body.events.forEach(event => {
-      // 確保事件中有 source 和 userId 欄位，避免非用戶觸發的事件造成錯誤
-      // 例如：用戶加入群組，但 Bot 還沒被加入時，可能沒有 userId
-      if (event.source && event.source.userId) {
-        const userId = event.source.userId;
-        const eventType = event.type;
-
-        console.log('----------------------------------------------------');
-        console.log('✅ 成功提取到用戶資訊！');
-        console.log(`  🔹 事件類型 (Event Type): ${eventType}`);
-        console.log(`  👤 用戶 ID (User ID): ${userId}`);
-        console.log('----------------------------------------------------');
-
-        // 未來您可以在這裡加入更多邏輯，例如：
-        // 1. 查詢資料庫看此 userId 是否已存在
-        // 2. 如果不存在，就呼叫 Get Profile API 獲取用戶名稱並存入資料庫
-        // 3. 根據事件類型做出不同的回應
-      }
-    });
+// Webhook 的主要路徑，並使用 LINE SDK 的中介軟體來驗證請求
+app.post('/webhook', line.middleware(config), (req, res) => {
+  // 確保請求 body 和 events 存在
+  if (!req.body || !req.body.events) {
+    return res.status(200).send('OK');
   }
 
-  // 收到請求後，必須在幾秒內回傳 200 OK 的狀態碼給 LINE 平台
-  // 否則 LINE 會認為 Webhook 失敗並重試，導致您收到重複的請求
-  res.sendStatus(200);
+  // 使用 Promise.all 來處理所有事件，確保伺服器能快速回應
+  Promise.all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
+    .catch((err) => {
+      console.error(err);
+      res.status(500).end();
+    });
 });
 
+// 核心的事件處理函式
+async function handleEvent(event) {
+  // 如果不是訊息事件，或不是文字訊息，就忽略
+  if (event.type !== 'message' || event.message.type !== 'text') {
+    return Promise.resolve(null);
+  }
+
+  // ⭐️⭐️⭐️ 主要邏輯：當用戶輸入 'profile' 時觸發 ⭐️⭐️⭐️
+  if (event.message.text.toLowerCase() === 'profile') {
+    const userId = event.source.userId;
+    
+    try {
+      // 步驟 1: 使用 userId 呼叫 Get Profile API
+      const userProfile = await client.getProfile(userId);
+
+      // 步驟 2: 組合要回覆的文字訊息
+      const replyText = `嗨！這是我知道關於你的資訊：\n\n` +
+                      `👤 顯示名稱:\n${userProfile.displayName}\n\n` +
+                      `💬 狀態消息:\n${userProfile.statusMessage || '(無)'}\n\n` +
+                      `🖼️ 頭像 URL:\n${userProfile.pictureUrl}\n\n` +
+                      `🔑 你的 User ID (開發用):\n${userId}`;
+
+      // 步驟 3: 建立一個 LINE 的文字訊息物件
+      const message = {
+        type: 'text',
+        text: replyText,
+      };
+
+      // 步驟 4: 使用 replyToken 將訊息回覆給用戶
+      return client.replyMessage(event.replyToken, message);
+
+    } catch (error) {
+      console.error('獲取個人資料或回覆時出錯:', error);
+      // 如果出錯，也可以回覆一則錯誤訊息給用戶
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '抱歉，獲取您的資料時發生了一點問題。'
+      });
+    }
+  }
+
+  // 如果訊息不是 'profile'，可以選擇不回覆或做其他處理
+  return Promise.resolve(null);
+}
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`伺服器啟動，監聽埠號 ${PORT}`);
 });
